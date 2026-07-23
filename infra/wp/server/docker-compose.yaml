@@ -1,0 +1,69 @@
+services:
+  seimor-db:
+    image: mysql:8.0
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${DB_NAME}
+      MYSQL_USER: ${DB_USER}
+      MYSQL_PASSWORD: ${DB_PASSWORD}
+    command: --innodb-buffer-pool-size=128M --max-connections=50 --performance-schema=OFF
+    mem_limit: 640m
+    memswap_limit: 768m
+    volumes:
+      - seimor_db_data:/var/lib/mysql
+    networks:
+      - proxy
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -u root -p$$MYSQL_ROOT_PASSWORD || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    labels:
+      - autoheal=true
+
+  seimor:
+    image: wordpress:latest
+    restart: always
+    depends_on:
+      seimor-db:
+        condition: service_healthy
+    environment:
+      WORDPRESS_DB_HOST: seimor-db:3306
+      WORDPRESS_DB_NAME: ${DB_NAME}
+      WORDPRESS_DB_USER: ${DB_USER}
+      WORDPRESS_DB_PASSWORD: ${DB_PASSWORD}
+      WORDPRESS_TABLE_PREFIX: ${TABLE_PREFIX:-wp_}
+    mem_limit: 1000m
+    memswap_limit: 1000m
+    volumes:
+      - seimor_data:/var/www/html
+    networks:
+      - proxy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost/ || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    labels:
+      - autoheal=true
+
+  autoheal:
+    image: willfarrell/autoheal
+    restart: always
+    environment:
+      AUTOHEAL_CONTAINER_LABEL: autoheal
+      AUTOHEAL_INTERVAL: 30
+      AUTOHEAL_START_PERIOD: 60
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+
+volumes:
+  seimor_db_data:
+  seimor_data:
+
+networks:
+  proxy:
+    external: true

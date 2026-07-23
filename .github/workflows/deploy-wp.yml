@@ -1,0 +1,58 @@
+name: Deploy to PROD
+
+on:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: deploy-prod-main
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    env:
+      WP_NAME: seimor
+      DEPLOY_PATH: /root/prod/clients/seimor
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -p 22 ${{ secrets.VPS_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Deploy INFRA Files
+        run: |
+          rsync -avz --delete \
+            --exclude ".env" \
+            -e "ssh -p 22" \
+            ./infra/wp/server/ root@${{ secrets.VPS_HOST }}:${{ env.DEPLOY_PATH }}/
+
+      - name: Create .env and restart
+        run: |
+          ssh -p 22 root@${{ secrets.VPS_HOST }} bash <<'ENDSSH'
+            set -e
+            mkdir -p "${{ env.DEPLOY_PATH }}"
+
+            printf '%s\n' \
+              'DB_ROOT_PASSWORD=${{ secrets.DB_ROOT_PASSWORD }}' \
+              'DB_NAME=${{ env.WP_NAME }}_wordpress' \
+              'DB_USER=${{ env.WP_NAME }}_wordpress' \
+              'DB_PASSWORD=${{ secrets.DB_PASSWORD }}' \
+              'TABLE_PREFIX=wp_' \
+              > "${{ env.DEPLOY_PATH }}/.env"
+
+            chmod 600 "${{ env.DEPLOY_PATH }}/.env"
+
+            cd "${{ env.DEPLOY_PATH }}"
+            docker compose down
+            docker compose up -d
+            docker compose -f /root/prod/nginx/docker-compose.yml exec nginx nginx -s reload
+          ENDSSH
